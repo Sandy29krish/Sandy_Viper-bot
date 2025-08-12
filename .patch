@@ -1,0 +1,175 @@
+diff --git a/runner_expiry.py b/runner_expiry.py
+index 541c8d1..3c1c8b9 100644
+--- a/runner_expiry.py
++++ b/runner_expiry.py
+@@ -1,4 +1,5 @@
+ from strategy_expiry import run_once
+ if __name__=='__main__':
+-    for s in ('NIFTY','BANKNIFTY','SENSEX','FINNIFTY'): run_once(s)
++    for s in ('NIFTY','BANKNIFTY','FINNIFTY','MIDCPNIFTY'):
++        run_once(s)
+diff --git a/telegram_bot.py b/telegram_bot.py
+index 3c9a12b..6b7e8a1 100644
+--- a/telegram_bot.py
++++ b/telegram_bot.py
+@@ -1,4 +1,38 @@
+-def send(msg:str): print('TG:', msg)
+-def send_entry(ctx:dict): print('TG ENTRY:', ctx)
+-def send_exit(ctx:dict): print('TG EXIT:', ctx)
+-def send_warn(msg:str): print('TG WARN:', msg)
++import os
++import requests
++
++TOKEN = os.getenv('TELEGRAM_BOT_TOKEN_EXPIRY')
++CHAT_ID = os.getenv('TELEGRAM_CHAT_ID_EXPIRY')
++API = f"https://api.telegram.org/bot{TOKEN}/sendMessage" if TOKEN else None
++
++def _send_text(text: str):
++    if not (TOKEN and CHAT_ID and API):
++        print('TG (mock):', text)
++        return
++    try:
++        requests.post(API, json={"chat_id": CHAT_ID, "text": text}, timeout=10)
++    except Exception as e:
++        print('TG error:', e)
++
++def send(msg: str):
++    _send_text(msg)
++
++def send_entry(ctx: dict):
++    # ctx: {'symbol','side','strike','fut','order'}
++    symbol = ctx.get('symbol', 'NIFTY')
++    side = ctx.get('side', 'CE')
++    strike = ctx.get('strike', 0)
++    fut = ctx.get('fut', 0.0)
++    order = ctx.get('order', {})
++    arrow = '🔺' if side == 'CE' else '🔻'
++    text = (
++        f"🚀 {symbol} {('CALL' if side=='CE' else 'PUT')} Trade Alert\n"
++        f"Futures Price: {fut:,.2f}\n"
++        f"Strike: {strike:,} {side}\n"
++        f"Entry: {order.get('avg','market')}\n"
++        f"Order ID: {order.get('order_id','paper')}\n"
++        f"Reason: {arrow} Momentum + OI skew confirm"
++    )
++    _send_text(text)
++
++def send_exit(ctx: dict):
++    _send_text(f"🚪 EXIT {ctx}")
++
++def send_warn(msg: str):
++    _send_text(f"⚠️ {msg}")
+diff --git a/kite_api.py b/kite_api.py
+index 6c1a8b0..a0b3a3b 100644
+--- a/kite_api.py
++++ b/kite_api.py
+@@ -1,7 +1,10 @@
+ from zerodha_auth import ensure_session
+ from config import ENTRY_POLICY
+ def place_market(symbol:str, qty:int, side:str):
+-    ensure_session()
+-    print(f"[PAPER] ORDER {side} {symbol} x{qty} {ENTRY_POLICY['product']} {ENTRY_POLICY['order_type']}")
+-    return {'status':'ok','order_id':'paper-1'}
++    # Manual token policy: ensure_session should validate the existing token; no auto-refresh
++    ensure_session()
++    # Paper mode: return a mock order with avg price placeholder for alerts
++    print(f"[PAPER] ORDER {side} {symbol} x{qty} {ENTRY_POLICY['product']} {ENTRY_POLICY['order_type']}")
++    return {'status':'ok','order_id':'paper-1','avg':'market'}
+diff --git a/strategy_expiry.py b/strategy_expiry.py
+index 5c5b4a1..f7e2d8f 100644
+--- a/strategy_expiry.py
++++ b/strategy_expiry.py
+@@ -1,15 +1,15 @@
+-from datetime import datetime, timedelta
+-from config import AWARENESS, ENTRY_POLICY, TIME_WINDOWS
++from datetime import datetime, timedelta
++from config import AWARENESS, ENTRY_POLICY, TIME_WINDOWS, MARKET
+ from indicator import compute_1m, compute_3m
+ from nse_data import fetch_snapshot
+ from kite_api import place_market
+ from telegram_bot import send_entry, send_warn
+ from trade_logger import log
+ from lot_manager import decide_lots
+ 
+ def _band(strikes, atm, band, side):
+     return [s for s in strikes if s.side==side and abs(s.strike-atm)<=band*50]
+ 
+@@ -34,23 +34,29 @@ def choose_strike(fut_ltp:float, direction:str, now:datetime)->int:
+     return -1
+ 
+ def run_once(symbol='NIFTY'):
+-    now=datetime.utcnow()+timedelta(hours=5,minutes=30)
+-    snap=fetch_snapshot(symbol, 5)
++    now = datetime.utcnow() + timedelta(hours=5, minutes=30)
++    hhmm = now.strftime('%H:%M')
++    # Exit-only window
++    if hhmm >= MARKET['force_exit']:
++        send_warn('After force-exit window – manage only'); return
++    snap = fetch_snapshot(symbol, 5)
+     f1=compute_1m(symbol); f3=compute_3m(symbol)
+     direction='BULL' if f3.price_above_200wma else 'BEAR'
+     ce_over_pe, pe_over_ce = skew(snap, 2)
+     side_skew=ce_over_pe if direction=='BULL' else pe_over_ce
+     if side_skew < AWARENESS['skew_min']:
+         send_warn(f'{symbol} gate: weak skew {side_skew:.2f}'); return
+-    if f3.lr_slope_3m < AWARENESS['lr_slope_min']:
+-        send_warn(f'{symbol} gate: lr slope {f3.lr_slope_3m:.2f} < {AWARENESS['lr_slope_min']}'); return
++    if f3.lr_slope_3m < AWARENESS['lr_slope_min']:
++        send_warn(f'{symbol} gate: lr slope {f3.lr_slope_3m:.2f} < {AWARENESS[\"lr_slope_min\"]}'); return
+     strike=choose_strike(snap.fut_ltp, direction, now)
+-    if strike<0: send_warn('After 15:00 – no new entries'); return
++    # No new entries after 14:00 (expiry discipline)
++    if strike < 0 or hhmm >= '14:00': send_warn('No new entries after 14:00'); return
+     side='CE' if direction=='BULL' else 'PE'
+     lots=decide_lots(symbol, 0.95)
+     if ENTRY_POLICY['product']!='MIS' or ENTRY_POLICY['order_type']!='MARKET':
+         send_warn('Only MIS + MARKET allowed'); return
+     res=place_market(f'{symbol}{strike}{side}', lots, 'BUY')
+     send_entry({'symbol':symbol,'side':side,'strike':strike,'fut':snap.fut_ltp,'skew':side_skew,'order':res})
+     log({'event':'entry','symbol':symbol,'side':side,'strike':strike,'fut':snap.fut_ltp,'ts':now.isoformat()})
+diff --git a/config.py b/config.py
+index 5f5a2b3..6a1b2a9 100644
+--- a/config.py
++++ b/config.py
+@@ -6,5 +6,5 @@ MARKET = {"open":"09:15","close":"15:30","force_exit":"15:15"}
+ AWARENESS = {"skew_min":1.2,"velocity_z_min":1.5,"lr_slope_min":2.5,"early_entry_sec":120}
+ VIX_BANDS = {"low":12.0,"mid":16.0,"high":20.0,"extreme":23.0}
+-INSTRUMENTS = ["NIFTY","BANKNIFTY","SENSEX","FINNIFTY"]
++INSTRUMENTS = ["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY"]
+diff --git a/ai_assistant_expiry.py b/ai_assistant_expiry.py
+deleted file mode 100644
+index e69de29..0000000
+--- a/ai_assistant_expiry.py
++++ /dev/null
+@@ -1 +0,0 @@
+diff --git a/auto_token_refresher.py b/auto_token_refresher.py
+deleted file mode 100644
+index e69de29..0000000
+--- a/auto_token_refresher.py
++++ /dev/null
+@@ -1 +0,0 @@
+diff --git a/learning_engine.py b/learning_engine.py
+deleted file mode 100644
+index e69de29..0000000
+--- a/learning_engine.py
++++ /dev/null
+@@ -1 +0,0 @@
+diff --git a/telegram_commands.py b/telegram_commands.py
+deleted file mode 100644
+index e69de29..0000000
+--- a/telegram_commands.py
++++ /dev/null
+@@ -1 +0,0 @@
+diff --git a/watchdog.py b/watchdog.py
+deleted file mode 100644
+index e69de29..0000000
+--- a/watchdog.py
++++ /dev/null
+@@ -1 +0,0 @@
+diff --git a/requirements.txt b/requirements.txt
+new file mode 100644
+index 0000000..a3f5b1b
+--- /dev/null
++++ b/requirements.txt
+@@ -0,0 +1 @@
++requests>=2.28.0

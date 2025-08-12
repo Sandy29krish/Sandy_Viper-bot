@@ -1,0 +1,54 @@
+# Core dependencies
+requests>=2.31.0
+pandas>=2.0.3
+numpy>=1.24.3
+psutil>=5.9.5
+
+# Date and time handling
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# Data analysis and visualization
+matplotlib>=3.7.2
+seaborn>=0.12.2
+plotly>=5.15.0
+
+# Telegram bot (for future implementation)
+python-telegram-bot>=20.5
+
+# Web scraping and API
+beautifulsoup4>=4.12.2
+lxml>=4.9.3
+
+# Configuration and environment
+python-dotenv>=1.0.0
+
+# Logging and monitoring
+loguru>=0.7.0
+
+# Date and time handling
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# Async support (for future features)
+aiohttp>=3.8.5
+asyncio>=3.4.3
+
+# Data validation
+pydantic>=2.1.1
+
+# Testing (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.1
+
+# Development tools (optional)
+black>=23.7.0
+flake8>=6.0.0
+mypy>=1.5.1
+
+# Kite Connect API (official)
+kiteconnect>=4.1.1
+
+# Additional utilities
+pytz>=2023.3
+schedule>=1.2.0
