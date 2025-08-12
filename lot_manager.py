@@ -8,6 +8,25 @@ from datetime import datetime
 from config import config
 from trade_logger import trade_logger
 from kite_api import kite_api
+from config import GLOBAL_EXPOSURE_CAP, MAX_TRADES_PER_INSTRUMENT
+
+_open_exposures: Dict[str, float] = {}
+_trade_counts: Dict[str, int] = {}
+
+def can_open(symbol: str, needed_exposure: float) -> bool:
+    total = sum(_open_exposures.values())
+    if total + needed_exposure > GLOBAL_EXPOSURE_CAP:
+        return False
+    if _trade_counts.get(symbol,0) >= MAX_TRADES_PER_INSTRUMENT:
+        return False
+    return True
+
+def register_entry(symbol: str, exposure: float) -> None:
+    _open_exposures[symbol] = _open_exposures.get(symbol,0.0) + exposure
+    _trade_counts[symbol] = _trade_counts.get(symbol,0) + 1
+
+def register_exit(symbol: str, exposure: float) -> None:
+    _open_exposures[symbol] = max(0.0, _open_exposures.get(symbol,0.0) - exposure)
 
 
 class LotManager:
