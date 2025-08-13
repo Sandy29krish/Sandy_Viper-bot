@@ -158,6 +158,15 @@ class SystemWatchdog:
                     margins = kite_api.get_margins()
                     kite_response_time = time.time() - start_time
                     kite_status = "CONNECTED" if margins.get("status") == "success" else "ERROR"
+                    # Flush any queued orders on restored connectivity
+                    if kite_status == "CONNECTED":
+                        try:
+                            from kite_api import flush_queue
+                            res = flush_queue()
+                            if res.get('placed'):
+                                trade_logger.log_info(f"Flushed queued orders: {res}")
+                        except Exception as _e:
+                            trade_logger.log_warning(f"Queue flush failed: {_e}")
             except Exception:
                 kite_status = "ERROR"
             

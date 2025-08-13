@@ -28,12 +28,15 @@ def choose_strike(fut_ltp:float, direction:str, now:datetime)->int:
     round50=lambda x:int(round(x/50.0)*50)
     ceil50=lambda x:int(((x+49)//50)*50)
     floor50=lambda x:int((x//50)*50)
+    # Dynamic: early go further OTM; midday ATM; afternoon closer ITM bias on follow-through
     if TIME_WINDOWS['morning'][0]<=hhmm<TIME_WINDOWS['morning'][1]:
-        return ceil50(fut_ltp) if direction=='BULL' else floor50(fut_ltp)
+        base = ceil50(fut_ltp) if direction=='BULL' else floor50(fut_ltp)
+        return base + (100 if direction=='BULL' else -100)
     if TIME_WINDOWS['midday'][0]<=hhmm<TIME_WINDOWS['midday'][1]:
         return round50(fut_ltp)
     if TIME_WINDOWS['afternoon'][0]<=hhmm<TIME_WINDOWS['afternoon'][1]:
-        return floor50(fut_ltp) if direction=='BULL' else ceil50(fut_ltp)
+        base = floor50(fut_ltp) if direction=='BULL' else ceil50(fut_ltp)
+        return base
     return -1
 
 # Placeholder for VIX and OI/Vol gates
@@ -46,8 +49,27 @@ def option_confirm_score(symbol:str)->float:
     return 0.8
 
 def oi_volume_gate(symbol:str)->bool:
-    # TODO: Implement PCR/skew/velocity checks using nse_data snapshots
-    return True
+    try:
+        snap=fetch_snapshot(symbol, 6)
+        if not snap or not snap.atm:
+            return False
+        x_pcr=pcr(snap, 6)
+        ce_skew, pe_skew = skew(snap, 2)
+        # OI velocity proxy: compare near-band OI vs mid-band OI
+        near_ce=sum(s.oi for s in _band(snap.strikes,snap.atm,1,'CE'))
+        near_pe=sum(s.oi for s in _band(snap.strikes,snap.atm,1,'PE'))
+        mid_ce=sum(s.oi for s in _band(snap.strikes,snap.atm,3,'CE'))
+        mid_pe=sum(s.oi for s in _band(snap.strikes,snap.atm,3,'PE'))
+        vel_ce = (near_ce/mid_ce) if mid_ce>0 else 0.0
+        vel_pe = (near_pe/mid_pe) if mid_pe>0 else 0.0
+        # Gates
+        if x_pcr<0.8 and pe_skew<0.9 and vel_ce>0.6:
+            return True  # CE supportive
+        if x_pcr>1.2 and ce_skew<0.9 and vel_pe>0.6:
+            return True  # PE supportive
+        return False
+    except Exception:
+        return False
 
 # Hybrid 1m/3m execution controller (simplified)
 _last_entry = {}
@@ -95,6 +117,8 @@ def run_once(symbol='NIFTY'):
     res=place_market(f'{symbol}{strike}{side}', lots, 'BUY')
     register_entry(symbol, exposure)
 
+    if res.get('status')=='queued':
+        send_warn(f"{symbol} {strike}{side}: order queued due to session; will auto-flush")
     send_entry({'symbol':symbol,'side':side,'strike':strike,'fut':snap.fut_ltp,'order':res})
     log({'event':'entry','symbol':symbol,'side':side,'strike':strike,'fut':snap.fut_ltp,'ts':now.isoformat()})
     log_features({'symbol':symbol,'side':side,'strike':strike,'vix':vix,'opt_score':opt_score})

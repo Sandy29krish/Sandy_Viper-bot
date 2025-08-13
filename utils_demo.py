@@ -315,6 +315,16 @@ def demo_technical_indicators():
     print(f"  Support: S1: {pivot_data['s1']:.2f}, S2: {pivot_data['s2']:.2f}")
 
 
+def demo_queue_flush():
+    from kite_api import place_market, flush_queue
+    # Force queue (simulate by not having valid session)
+    r1 = place_market('NIFTY24500CE', 1, 'BUY')
+    print('queued_res:', r1)
+    # Now flush (will still fail if no session, but function returns counters)
+    res = flush_queue()
+    print('flush_res:', res)
+
+
 def main():
     """Main demo function"""
     print("🐍 Sandy Viper Bot - Utils Package Demo")
@@ -327,6 +337,7 @@ def main():
         demo_formatting_utils()
         demo_file_utils()
         demo_technical_indicators()
+        demo_queue_flush() # Added new demo function
         
         print("\n" + "=" * 60)
         print("✅ All Utils Demos Completed Successfully!")

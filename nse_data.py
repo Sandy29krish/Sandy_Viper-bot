@@ -317,3 +317,67 @@ class NSEData:
 
 # Global NSE data instance
 nse_data = NSEData()
+
+# Lightweight snapshot types for strategy usage
+from dataclasses import dataclass
+from typing import NamedTuple
+
+@dataclass
+class StrikeSnap:
+    strike: int
+    side: str  # 'CE' or 'PE'
+    oi: float
+    vol: float
+
+@dataclass
+class Snapshot:
+    symbol: str
+    fut_ltp: float
+    atm: int
+    strikes: list
+
+def _nearest_step(price: float, step: int) -> int:
+    try:
+        return int(round(float(price)/step)*step)
+    except Exception:
+        return int(price)
+
+def fetch_snapshot(symbol: str, band_points: int = 5) -> Snapshot:
+    """Build a minimal snapshot around ATM from NSE option chain.
+    band_points counts 50/100 steps around ATM for CE/PE aggregation.
+    """
+    data = nse_data.get_option_chain(symbol)
+    # Underlying
+    fut_ltp = 0.0
+    try:
+        fut_ltp = float(((data or {}).get('records') or {}).get('underlyingValue') or 0.0)
+    except Exception:
+        fut_ltp = 0.0
+    # Strike step
+    step = 50
+    if symbol.upper() == 'BANKNIFTY':
+        step = 100
+    elif symbol.upper() == 'MIDCPNIFTY':
+        step = 25
+    atm = _nearest_step(fut_ltp, step) if fut_ltp else 0
+    snaps = []
+    try:
+        records = (data or {}).get('records', {})
+        rows = records.get('data', [])
+        # Filter same expiry as first row
+        target_exp = rows[0].get('expiryDate') if rows else None
+        for row in rows:
+            if target_exp and row.get('expiryDate') != target_exp:
+                continue
+            sp = int(row.get('strikePrice', 0) or 0)
+            if atm and abs(sp - atm) > band_points*step:
+                continue
+            ce = row.get('CE') or {}
+            pe = row.get('PE') or {}
+            if ce:
+                snaps.append(StrikeSnap(sp, 'CE', float(ce.get('openInterest') or 0), float(ce.get('totalTradedVolume') or 0)))
+            if pe:
+                snaps.append(StrikeSnap(sp, 'PE', float(pe.get('openInterest') or 0), float(pe.get('totalTradedVolume') or 0)))
+    except Exception:
+        pass
+    return Snapshot(symbol=symbol.upper(), fut_ltp=fut_ltp, atm=atm, strikes=snaps)

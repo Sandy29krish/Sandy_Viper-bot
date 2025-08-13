@@ -135,3 +135,14 @@ class ZerodhaAuth:
 
 # Global auth instance
 zerodha_auth = ZerodhaAuth()
+
+def ensure_session() -> None:
+    """Validate Zerodha session before any broker call.
+    Raises a clear exception if invalid so callers can handle/skip/queue.
+    """
+    try:
+        ok = zerodha_auth.validate_session()
+        if not ok:
+            raise Exception("Kite session invalid or expired")
+    except Exception as e:
+        raise Exception(f"Kite session check failed: {e}")

@@ -13,6 +13,27 @@ from auto_token_refresher import auto_refresher
 from watchdog import watchdog
 from lot_manager import lot_manager
 from nse_data import nse_data
+from threading import Thread
+
+try:
+    from flask import Flask, jsonify
+    _health_app = Flask(__name__)
+    @_health_app.route('/health')
+    def _health():
+        positions = lot_manager.get_position_summary()
+        return jsonify({
+            'status': 'ok',
+            'daily_pnl': positions.get('daily_realized_pnl',0),
+            'open_positions': positions.get('total_positions',0),
+            'risk_utilization': positions.get('risk_utilization',0),
+        })
+    def start_health():
+        try:
+            _health_app.run(host='0.0.0.0', port=int(os.getenv('PORT', '8080')))
+        except Exception:
+            pass
+except Exception:
+    _health_app = None
 
 
 def initialize_bot():
@@ -42,7 +63,12 @@ def initialize_bot():
     # Start auto token refresher
     print("🔄 Starting auto token refresher...")
     auto_refresher.start()
-    
+
+    # Start health server
+    if _health_app:
+        Thread(target=start_health, daemon=True).start()
+        print("🩺 Health server started")
+
     print("✅ Bot initialization completed!")
     return True
 
